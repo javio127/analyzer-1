@@ -43,14 +43,14 @@ export async function POST(request: NextRequest) {
     // Upload file to OpenAI
     console.log('🔄 Uploading file to OpenAI...');
     console.log('📊 Buffer details:', { size: buffer.length, type: typeof buffer });
-    console.log('📊 Purpose:', 'user_data');
+    console.log('📊 Purpose:', 'assistants');
     
     let uploadedFile;
     try {
       // Add timeout to prevent hanging
       const uploadPromise = openai.files.create({
         file: buffer,
-        purpose: 'user_data',
+        purpose: 'assistants',
       });
       
       const timeoutPromise = new Promise((_, reject) => 
@@ -86,8 +86,8 @@ export async function POST(request: NextRequest) {
 
     console.log('🔄 Adding file to vector store:', vectorStoreId);
     try {
-      await openai.beta.vectorStores.files.create(vectorStoreId, {
-        file_id: uploadedFile.id,
+      await openai.beta.vectorStores.fileBatches.create(vectorStoreId, {
+        file_ids: [uploadedFile.id],
       });
       console.log('✅ File added to vector store successfully');
     } catch (vectorStoreError) {
