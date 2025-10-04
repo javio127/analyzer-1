@@ -94,7 +94,7 @@ export function PDFAnalyzer() {
                   </div>
                   <h3 className="font-semibold mb-2">2. Vector Store</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-300">
-                    Automatically creates vector store via OpenAI API
+                    Creates a new vector store for each PDF automatically
                   </p>
                 </div>
               </CardContent>

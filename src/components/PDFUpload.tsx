@@ -85,7 +85,7 @@ export function PDFUpload({ onUploadSuccess }: PDFUploadProps) {
           onUploadSuccess(result.vectorStoreId);
         }
 
-        toast.success(`PDF "${fileData.file.name}" uploaded successfully!`);
+        toast.success(`PDF "${fileData.file.name}" uploaded and processed successfully!`);
       } catch (error) {
         setUploadedFiles(prev => 
           prev.map(f => 

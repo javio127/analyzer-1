@@ -13,19 +13,11 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File;
 
     if (!file) {
-      console.log('❌ No file provided');
-      return NextResponse.json(
-        { error: 'No file provided' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
 
     if (file.type !== 'application/pdf') {
-      console.log('❌ Invalid file type:', file.type);
-      return NextResponse.json(
-        { error: 'Only PDF files are allowed' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Only PDF files are allowed' }, { status: 400 });
     }
 
     console.log('✅ File validation passed:', {
@@ -34,73 +26,33 @@ export async function POST(request: NextRequest) {
       type: file.type
     });
 
-    // Convert File to Buffer
-    console.log('🔄 Converting file to buffer...');
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    console.log('✅ Buffer created, size:', buffer.length);
-
-    // Upload file to OpenAI
+    // Step 1: Upload file to OpenAI
     console.log('🔄 Uploading file to OpenAI...');
-    console.log('📊 Buffer details:', { size: buffer.length, type: typeof buffer });
-    console.log('📊 Purpose:', 'assistants');
-    
-    let uploadedFile;
-    try {
-      // Add timeout to prevent hanging
-      const uploadPromise = openai.files.create({
-        file: buffer,
-        purpose: 'assistants',
-      });
-      
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Upload timeout after 30 seconds')), 30000)
-      );
-      
-      console.log('⏳ Starting upload with timeout...');
-      uploadedFile = await Promise.race([uploadPromise, timeoutPromise]);
-      console.log('✅ File uploaded to OpenAI:', uploadedFile.id);
-    } catch (uploadError) {
-      console.error('❌ File upload failed:', uploadError);
-      console.error('❌ Error details:', {
-        message: uploadError.message,
-        name: uploadError.name,
-        stack: uploadError.stack
-      });
-      throw uploadError;
-    }
+    const uploadedFile = await openai.files.create({
+      file: file,
+      purpose: 'assistants',
+    });
+    console.log('✅ File uploaded to OpenAI:', uploadedFile.id);
 
-    // Add file to existing vector store
-    const vectorStoreId = process.env.OPENAI_VECTOR_STORE_ID || 'vs_your_vector_store_id_here';
-    
-    if (vectorStoreId === 'vs_your_vector_store_id_here') {
-      console.log('⚠️ No vector store ID configured, skipping vector store addition');
-      return NextResponse.json({
-        success: true,
-        vectorStoreId: null,
-        fileId: uploadedFile.id,
-        fileName: file.name,
-        message: 'File uploaded but no vector store configured'
-      });
-    }
+    // Step 2: Create a new vector store
+    console.log('🔄 Creating vector store...');
+    const vectorStore = await openai.vectorStores.create({
+      name: `PDF Store - ${file.name}`,
+    });
+    console.log('✅ Vector store created:', vectorStore.id);
 
-    console.log('🔄 Adding file to vector store:', vectorStoreId);
-    try {
-      await openai.beta.vectorStores.fileBatches.create(vectorStoreId, {
-        file_ids: [uploadedFile.id],
-      });
-      console.log('✅ File added to vector store successfully');
-    } catch (vectorStoreError) {
-      console.error('❌ Failed to add file to vector store:', vectorStoreError);
-      // Don't throw error - file was uploaded successfully
-    }
-    
-    console.log('🎉 File upload completed successfully!');
-    console.log('📊 Using vector store:', vectorStoreId);
+    // Step 3: Add file to vector store
+    console.log('🔄 Adding file to vector store...');
+    const vectorStoreFile = await openai.vectorStores.files.create(vectorStore.id, {
+      file_id: uploadedFile.id,
+    });
+    console.log('✅ File added to vector store:', vectorStoreFile.id);
+
+    console.log('🎉 Upload completed successfully!');
 
     return NextResponse.json({
       success: true,
-      vectorStoreId: vectorStoreId,
+      vectorStoreId: vectorStore.id,
       fileId: uploadedFile.id,
       fileName: file.name,
     });

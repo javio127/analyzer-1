@@ -31,6 +31,8 @@ export function PDFChat({ vectorStoreId, onNewPDF }: PDFChatProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResponseId, setLastResponseId] = useState<string | null>(null);
+  const [streamingMessage, setStreamingMessage] = useState<string>('');
+  const [isStreaming, setIsStreaming] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
@@ -62,6 +64,8 @@ export function PDFChat({ vectorStoreId, onNewPDF }: PDFChatProps) {
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setIsStreaming(true);
+    setStreamingMessage('');
     setError(null);
 
     try {
@@ -73,30 +77,72 @@ export function PDFChat({ vectorStoreId, onNewPDF }: PDFChatProps) {
         body: JSON.stringify({ 
           message: input.trim(),
           vectorStoreId: vectorStoreId,
-          previousResponseId: lastResponseId, // Pass previous response ID for conversation state
+          previousResponseId: lastResponseId,
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to get response');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to get response');
       }
 
+      // Handle streaming response
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      let fullResponse = '';
+      let citations: Array<{ file_id: string; filename: string }> = [];
+      let responseId = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = new TextDecoder().decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'delta' && data.content) {
+                fullResponse += data.content;
+                setStreamingMessage(fullResponse);
+              } else if (data.type === 'citations') {
+                citations = data.citations || [];
+              } else if (data.type === 'responseId') {
+                responseId = data.responseId;
+              }
+            } catch (e) {
+              // Ignore parsing errors for incomplete chunks
+            }
+          }
+        }
+      }
+
+      // Add final message
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: data.response,
+        content: fullResponse,
         role: 'assistant',
         timestamp: new Date(),
-        citations: data.citations || [],
-        responseId: data.responseId, // Store response ID for conversation chaining
+        citations: citations,
+        responseId: responseId,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
-      setLastResponseId(data.responseId); // Update last response ID
+      setLastResponseId(responseId);
+      setStreamingMessage('');
+      setIsStreaming(false);
+
     } catch (err) {
       setError('Failed to get AI response. Please try again.');
       console.error('Chat error:', err);
+      setIsStreaming(false);
+      setStreamingMessage('');
     } finally {
       setIsLoading(false);
     }
@@ -134,7 +180,7 @@ export function PDFChat({ vectorStoreId, onNewPDF }: PDFChatProps) {
 
   return (
     <Card className="h-[600px] flex flex-col">
-      <CardHeader>
+      <CardHeader className="flex-shrink-0">
         <CardTitle className="flex items-center gap-2">
           <MessageSquare className="h-5 w-5" />
           PDF Chat
@@ -144,10 +190,10 @@ export function PDFChat({ vectorStoreId, onNewPDF }: PDFChatProps) {
         </CardDescription>
       </CardHeader>
       
-      <CardContent className="flex-1 flex flex-col">
+      <CardContent className="flex-1 flex flex-col min-h-0">
         {/* Messages */}
-        <ScrollArea className="flex-1 pr-4 mb-4" ref={scrollAreaRef}>
-          <div className="space-y-4">
+        <ScrollArea className="flex-1 pr-4 mb-4 min-h-0" ref={scrollAreaRef}>
+          <div className="space-y-4 pb-4">
             {messages.length === 0 ? (
               <div className="text-center text-gray-500 dark:text-gray-400 py-8">
                 <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -221,43 +267,61 @@ export function PDFChat({ vectorStoreId, onNewPDF }: PDFChatProps) {
                 </div>
               </div>
             )}
+
+            {/* Streaming Message */}
+            {isStreaming && streamingMessage && (
+              <div className="flex gap-3 justify-start">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                  <Bot className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                </div>
+                <div className="bg-white dark:bg-gray-800 border shadow-sm px-4 py-2 rounded-lg max-w-[80%]">
+                  <p className="text-sm whitespace-pre-wrap">{streamingMessage}</p>
+                  <div className="flex items-center gap-1 mt-2">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                    <span className="text-xs text-gray-500">AI is typing...</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </ScrollArea>
 
         {/* Error Alert */}
         {error && (
-          <Alert className="mb-4" variant="destructive">
+          <Alert className="mb-4 flex-shrink-0" variant="destructive">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
 
-        {/* Input */}
-        <div className="flex gap-2">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Ask a question about your PDF..."
-            className="flex-1 min-h-[60px] resize-none"
-            disabled={isLoading}
-          />
-          <Button
-            onClick={sendMessage}
-            disabled={!input.trim() || isLoading}
-            size="lg"
-            className="px-6"
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
+        {/* Input Area */}
+        <div className="flex-shrink-0 space-y-2">
+          <div className="flex gap-2">
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Ask a question about your PDF..."
+              className="flex-1 min-h-[60px] resize-none"
+              disabled={isLoading}
+            />
+            <Button
+              onClick={sendMessage}
+              disabled={!input.trim() || isLoading}
+              size="lg"
+              className="px-6"
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
 
-        {/* Tips */}
-        <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-          💡 Try asking: "What are the key points?", "Summarize this document", or "Find information about..."
+          {/* Tips */}
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            💡 Try asking: "What are the key points?", "Summarize this document", or "Find information about..."
+          </div>
         </div>
       </CardContent>
     </Card>
